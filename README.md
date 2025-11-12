@@ -28,7 +28,7 @@ pip install -r requirements.txt
 
 ### Modelos necesarios:
 - `yolo11n.pt` - Modelo YOLOv11 (se descarga automáticamente)
-- `license_plate_detector.pt` - Modelo personalizado para placas ⚠️ **REQUERIDO**
+- `license_plate_detector.pt` - Modelo personalizado para placas **REQUERIDO**
 
 ### Dependencias Python:
 - ultralytics >= 8.3.0
@@ -75,20 +75,20 @@ python visualize.py
 
 ```
 Deteccion-de-Placas-YOLOv11/
-├── 📄 main.py                    # Script principal de detección
-├── 🛠️ util.py                    # Funciones OCR y utilidades
-├── 📊 add_missing_data.py        # Interpolación de datos
-├── 🎬 visualize.py               # Generación de video
-├── 🚀 run_all.py                 # Pipeline completo
-├── 📦 install.py                 # Instalador automático
-├── 📋 requirements.txt           # Dependencias
-├── 🤖 yolo11n.pt                # Modelo YOLOv11
-├── 🎯 license_plate_detector.pt  # Modelo de placas
-├── 📁 sort/                      # Algoritmo de seguimiento
+├── main.py                    # Script principal de detección
+├──  util.py                    # Funciones OCR y utilidades
+├── add_missing_data.py        # Interpolación de datos
+├── visualize.py               # Generación de video
+├── run_all.py                 # Pipeline completo
+├──  install.py                 # Instalador automático
+├──  requirements.txt           # Dependencias
+├──  yolo11n.pt                # Modelo YOLOv11
+├──  license_plate_detector.pt  # Modelo de placas
+├──  sort/                      # Algoritmo de seguimiento
 │   ├── __init__.py
 │   └── sort.py
-├── 📁 imagenes/                  # Placas recortadas
-└── 📄 README.md
+├──  imagenes/                  # Placas recortadas
+└──  README.md
 ```
 
 ## Archivos de Salida
@@ -132,11 +132,11 @@ vehicles = [2, 3, 5, 7]  # Agregar/quitar según necesidad
 ## Rendimiento
 
 ### Factores que afectan la precisión:
-- ✅ **Calidad del video**: Mayor resolución = mejor OCR
-- ✅ **Iluminación**: Buena luz mejora la lectura
-- ✅ **Ángulo de la cámara**: Frontal es óptimo
-- ✅ **Velocidad del vehículo**: Menor velocidad = mejor captura
-- ✅ **Tamaño de la placa**: Placas más grandes se leen mejor
+-  **Calidad del video**: Mayor resolución = mejor OCR
+-  **Iluminación**: Buena luz mejora la lectura
+-  **Ángulo de la cámara**: Frontal es óptimo
+-  **Velocidad del vehículo**: Menor velocidad = mejor captura
+-  **Tamaño de la placa**: Placas más grandes se leen mejor
 
 ### Optimizaciones incluidas:
 - **Múltiples intentos OCR** (imagen original + preprocesada)
@@ -177,7 +177,7 @@ pip install easyocr
 
 Este proyecto está bajo la Licencia MIT. Ver `LICENSE` para más detalles.
 
-## 🙏 Agradecimientos
+## Agradecimientos
 
 - [Ultralytics](https://ultralytics.com/) por YOLOv11
 - [EasyOCR](https://github.com/JaidedAI/EasyOCR) por el motor OCR

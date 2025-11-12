@@ -1,4 +1,4 @@
-# util.py
+
 import re
 import os
 import cv2
@@ -7,21 +7,21 @@ from collections import Counter
 from rapidfuzz import fuzz
 import easyocr
 
-# =====================================
-# 🔧 INICIALIZACIÓN DE EASYOCR GLOBAL
-# =====================================
+# 
+#  INICIALIZACIÓN DE EASYOCR GLOBAL
 
-print("🧠 Inicializando EasyOCR... (puede tardar unos segundos)")
+
+print(" Inicializando EasyOCR... (puede tardar unos segundos)")
 try:
     reader = easyocr.Reader(['es', 'en'], gpu=True)
-    print("✅ EasyOCR inicializado con GPU")
+    print(" EasyOCR inicializado con GPU")
 except Exception:
     reader = easyocr.Reader(['es', 'en'], gpu=False)
-    print("⚠️ EasyOCR inicializado en CPU (sin GPU disponible)")
+    print(" EasyOCR inicializado en CPU (sin GPU disponible)")
 
-# =====================================
-# 🔠 MAPEOS Y FORMATOS DE PLACAS
-# =====================================
+# 
+# MAPEOS Y FORMATOS DE PLACAS
+# 
 
 DICT_CHAR_TO_INT = {'O': '0', 'Q': '0', 'D': '0', 'I': '1', 'L': '1', 'B': '8', 'S': '5', 'G': '6', 'Z': '2'}
 DICT_INT_TO_CHAR = {'0': 'O', '1': 'I', '2': 'Z', '3': 'B', '4': 'A', '5': 'S', '6': 'G', '8': 'B'}
@@ -37,9 +37,9 @@ PLATE_PATTERNS = [
 MIN_PLATE_LEN = 3
 
 
-# =====================================
-# 🔤 FORMATO Y LIMPIEZA DE TEXTO
-# =====================================
+# 
+#  FORMATO Y LIMPIEZA DE TEXTO
+
 
 def format_license(text):
     """Normaliza el texto de la placa (corrige letras/números comunes)."""
@@ -74,9 +74,8 @@ def extra_clean_license(text):
     return format_license(text)
 
 
-# =====================================
-# 🧠 PREPROCESAMIENTO DE IMAGEN DE PLACA
-# =====================================
+#  PREPROCESAMIENTO DE IMAGEN DE PLACA
+# 
 
 def preprocess_plate(plate_img):
     """Mejora la imagen para OCR."""
@@ -98,9 +97,9 @@ def preprocess_plate(plate_img):
     return enhanced
 
 
-# =====================================
-# 🔍 LECTURA DE PLACA
-# =====================================
+# 
+#  LECTURA DE PLACA
+# 
 
 def read_license_plate(license_crop):
     """
@@ -140,9 +139,8 @@ def read_license_plate(license_crop):
     return None, 0.0
 
 
-# =====================================
-# 🧮 CONSOLIDAR BUFFER DE LECTURAS
-# =====================================
+# 
+# CONSOLIDAR BUFFER DE LECTURAS
 
 def consolidar_buffer(buffer):
     """Agrupa lecturas similares ponderando por score y frecuencia."""
@@ -177,9 +175,9 @@ def consolidar_buffer(buffer):
     return best_text, best_score
 
 
-# =====================================
-# 🚗 VEHÍCULO MÁS CERCANO Y DIRECCIÓN
-# =====================================
+# 
+# VEHÍCULO MÁS CERCANO Y DIRECCIÓN
+
 
 def seleccionar_mas_cercano(tracks):
     """Devuelve el track con mayor área (vehículo más cercano)."""

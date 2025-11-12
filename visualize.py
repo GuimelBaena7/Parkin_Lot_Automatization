@@ -1,13 +1,13 @@
 import cv2
 import numpy as np
 
-# =====================================
-# 🎨 CONFIGURACIÓN VISUAL
-# =====================================
-COLOR_VEHICLE = (0, 255, 0)        # Verde brillante
-COLOR_PLATE = (255, 200, 0)        # Amarillo pastel
-COLOR_TEXT_BG = (0, 0, 0)          # Fondo negro
-COLOR_TEXT = (255, 255, 255)       # Blanco puro
+
+# CONFIGURACIÓN VISUAL
+
+COLOR_VEHICLE = (0, 255, 0)        
+COLOR_PLATE = (255, 200, 0)        
+COLOR_TEXT_BG = (0, 0, 0)        
+COLOR_TEXT = (255, 255, 255)       
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 THICKNESS_BOX = 2
@@ -15,9 +15,9 @@ THICKNESS_TEXT = 2
 SCALE_TEXT = 0.6
 
 
-# =====================================
-# 🧠 FUNCIÓN PRINCIPAL DE DIBUJO
-# =====================================
+# 
+#  FUNCIÓN PRINCIPAL DE DIBUJO
+
 def draw_detections(frame, results):
     """
     Dibuja rectángulos, texto y etiquetas de cada vehículo detectado.
@@ -30,9 +30,9 @@ def draw_detections(frame, results):
     for track_id, data in results.items():
         x1 = y1 = x2 = y2 = None  # valores iniciales seguros
 
-        # ============================
-        # 🚗 VEHÍCULO
-        # ============================
+        
+        # VEHÍCULO
+        # 
         if "car" in data and "bbox" in data["car"]:
             x1, y1, x2, y2 = map(int, data["car"]["bbox"])
             cv2.rectangle(overlay, (x1, y1), (x2, y2), COLOR_VEHICLE, THICKNESS_BOX)
@@ -48,9 +48,9 @@ def draw_detections(frame, results):
             label_vehicle = f"{icon} {tipo.upper()}"
             _draw_label(overlay, label_vehicle, (x1, max(15, y1 - 10)), COLOR_VEHICLE)
 
-        # ============================
-        # 📛 PLACA
-        # ============================
+        
+        # PLACA
+        # 
         if "license_plate" in data:
             lp = data["license_plate"]
             if lp.get("bbox"):
@@ -67,9 +67,9 @@ def draw_detections(frame, results):
                 conf_str = f"{text} ({score*100:.0f}%)"
                 _draw_label(overlay, conf_str, (pos_x, pos_y), COLOR_PLATE)
 
-        # ============================
-        # 🔢 ID del vehículo
-        # ============================
+        #
+        #  ID del vehículo
+    
         if x1 is not None and y1 is not None:
             cv2.putText(
                 overlay,
@@ -86,9 +86,9 @@ def draw_detections(frame, results):
     return frame
 
 
-# =====================================
-# 💬 FUNCIÓN AUXILIAR
-# =====================================
+# 
+#  FUNCIÓN AUXILIAR
+
 def _draw_label(img, text, pos, color_box):
     """
     Dibuja una etiqueta con fondo negro y texto coloreado.

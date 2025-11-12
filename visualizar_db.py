@@ -12,17 +12,17 @@ def visualizar_registros(show_all_detections=False, id_sort_filter=None):
     Además muestra estadísticas básicas por vehículo.
     """
     if not os.path.exists(DB_PATH):
-        print(f"❌ No se encontró la base de datos '{DB_PATH}'. Ejecuta primero main.py.")
+        print(f"No se encontró la base de datos '{DB_PATH}'. Ejecuta primero main.py.")
         return
 
     with sqlite3.connect(DB_PATH) as conn:
         print("\n" + "="*100)
-        print("📊 TABLA: REGISTROS (Vehículos únicos consolidados)")
+        print("TABLA: REGISTROS (Vehículos únicos consolidados)")
         print("="*100)
 
-        # =============================
+        # 
         # TABLA REGISTROS
-        # =============================
+        # 
         try:
             # Verificamos las columnas disponibles en la tabla
             cursor = conn.cursor()
@@ -51,25 +51,25 @@ def visualizar_registros(show_all_detections=False, id_sort_filter=None):
             df = pd.read_sql_query(query, conn)
 
             if df.empty:
-                print("📭 No hay registros en la tabla 'registros'.")
+                print("No hay registros en la tabla 'registros'.")
             else:
                 print(tabulate(df, headers="keys", tablefmt="grid", showindex=False))
-                print(f"\n✅ Total registros únicos consolidados: {len(df)}")
+                print(f"\nTotal registros únicos consolidados: {len(df)}")
 
         except Exception as e:
-            print(f"⚠️ Error mostrando 'registros': {e}")
+            print(f"Error mostrando 'registros': {e}")
 
-        # =============================
+        # 
         # TABLA DETECCIONES_RAW
-        # =============================
+        # 
         print("\n" + "="*100)
-        print("📑 TABLA: DETECCIONES_RAW (Lecturas OCR frame a frame)")
+        print("TABLA: DETECCIONES_RAW (Lecturas OCR frame a frame)")
         print("="*100)
 
         try:
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='detecciones_raw';")
             if not cursor.fetchone():
-                print("ℹ️ No existe tabla 'detecciones_raw'. Las lecturas OCR se manejan solo en memoria.")
+                print("ℹNo existe tabla 'detecciones_raw'. Las lecturas OCR se manejan solo en memoria.")
                 return
 
             if id_sort_filter is not None:
@@ -107,11 +107,11 @@ def visualizar_registros(show_all_detections=False, id_sort_filter=None):
                 else:
                     print(f"\nÚltimas {len(df_raw)} detecciones OCR registradas.")
 
-                # =============================
+                # 
                 # ESTADÍSTICAS
-                # =============================
+                # 
                 print("\n" + "="*100)
-                print("📈 ESTADÍSTICAS POR VEHÍCULO")
+                print("ESTADÍSTICAS POR VEHÍCULO")
                 print("="*100)
                 stats_query = """
                     SELECT
@@ -129,7 +129,7 @@ def visualizar_registros(show_all_detections=False, id_sort_filter=None):
                 print(tabulate(df_stats, headers="keys", tablefmt="grid", showindex=False, floatfmt=".3f"))
 
         except Exception as e:
-            print(f"⚠️ Error mostrando 'detecciones_raw' o estadísticas: {e}")
+            print(f"Error mostrando 'detecciones_raw' o estadísticas: {e}")
 
 
 if __name__ == "__main__":
