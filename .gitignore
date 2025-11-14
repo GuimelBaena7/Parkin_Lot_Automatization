@@ -1,6 +1,5 @@
 #Variables de entorno
 .env
-
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -169,3 +168,4 @@ test_interpolated.csv
 test.csv
 out.mp4
 yolov8n.pt
+/api/README.md

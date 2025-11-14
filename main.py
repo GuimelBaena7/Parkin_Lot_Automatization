@@ -107,9 +107,7 @@ vehiculo_estado = {}            # sort_id -> {bbox, frame_inicial, tipo, ...}
 movement_history = defaultdict(lambda: deque(maxlen=30))  # para inferir dirección
 lecturas_ocr = defaultdict(list)  # sort_id -> [(texto, score, frame_number)]
 
-# ==================================================
-# 🎯 FUNCIÓN REUTILIZABLE PARA DETECTAR EN UN FRAME
-# ==================================================
+
 def detectar_frame(frame, frame_nmr):
     """
     Detecta vehículo y placa en un frame, guarda registro si es necesario,

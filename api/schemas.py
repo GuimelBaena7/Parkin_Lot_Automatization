@@ -1,25 +1,64 @@
-# api/schemas.py
-from pydantic import BaseModel
+"""
+Esquemas Pydantic para Validación de Datos
+
+Define la estructura de datos para:
+- Requests del frontend
+- Responses del backend
+- Validación automática
+"""
+
+from pydantic import BaseModel, validator
+from datetime import datetime
 from typing import Optional
 
-class RegistroBase(BaseModel):
-    tipo_vehiculo: Optional[str] = None
-    placa_final: Optional[str] = None
-    direccion: Optional[str] = None
-    url_imagen: Optional[str] = None
-    id_sort_original: Optional[int] = None
-    frames_hasta_placa: Optional[int] = None
+class CamaraCreate(BaseModel):
+    """
+    Esquema para crear una nueva cámara
+    
+    El frontend envía:
+    {
+        "nombre": "Camara Entrada",
+        "url": "rtsp://mi-camara"
+    }
+    """
+    nombre: str
+    url: str
+    
+    @validator('nombre')
+    def validar_nombre(cls, v):
+        if not v or len(v.strip()) < 3:
+            raise ValueError('El nombre debe tener al menos 3 caracteres')
+        return v.strip()
+    
+    @validator('url')
+    def validar_url(cls, v):
+        if not v or not (v.startswith('rtsp://') or v.startswith('http://') or v.startswith('https://') or v.isdigit()):
+            raise ValueError('URL debe ser rtsp://, http://, https:// o número de cámara')
+        return v
 
-class RegistroCreate(RegistroBase):
+class CamaraResponse(BaseModel):
+    """
+    Esquema para respuesta de cámara
+    """
+    id: int
+    nombre: str
+    url: str
+    activa: int
+    fecha_registro: datetime
+    
+    class Config:
+        from_attributes = True
+
+class RegistroResponse(BaseModel):
+    id: int
+    camara_id: int
     tipo_vehiculo: str
     placa_final: str
-
-class RegistroUpdate(RegistroBase):
-    pass
-
-class RegistroResponse(RegistroBase):
-    id: int
-    hora_entrada: Optional[str] = None
-
+    confianza: float
+    hora_deteccion: datetime
+    direccion: str
+    ruta_imagen: Optional[str] = None
+    url_imagen: Optional[str] = None
+    
     class Config:
-        orm_mode = True
+        from_attributes = True
