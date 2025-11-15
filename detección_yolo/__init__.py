@@ -1,0 +1,1 @@
+# Este archivo indica que el directorio 'detección_yolo' es un paquete de Python.

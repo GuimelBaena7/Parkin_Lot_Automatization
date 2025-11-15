@@ -10,7 +10,7 @@ import os
 try:
     import sys
     sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-    from main import detectar_frame as detectar_frame_main
+    from detección_yolo.main import detectar_frame as detectar_frame_main
 except Exception:
     detectar_frame_main = None
 
