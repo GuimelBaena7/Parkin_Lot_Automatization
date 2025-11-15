@@ -36,14 +36,11 @@ class CameraManager:
             logger.warning(f"Límite de cámaras activas alcanzado: {MAX_ACTIVE_CAMERAS}")
             raise RuntimeError(f"Máximo de {MAX_ACTIVE_CAMERAS} cámaras activas alcanzado")
         
-        if websocket:
-            await self.register_listener(cam_id, websocket)
-        
         if cam_id not in self.active_tasks:
             loop = asyncio.get_event_loop()
             task = loop.create_task(self._process_loop(cam_id, url))
             self.active_tasks[cam_id] = task
-            logger.info(f"Cámara {cam_id} iniciada desde URL: {url}")
+            logger.info(f"🎬 Cámara {cam_id} iniciada desde URL: {url}")
 
     async def stop_camera(self, cam_id: int):
         """
@@ -94,50 +91,87 @@ class CameraManager:
         """
         Loop que abre la cámara y va procesando frames, enviando a todos los listeners.
         """
-        print(f"[CameraManager] Iniciando loop cámara {cam_id} -> {url}")
+        logger.info(f"[_process_loop] 🎥 Iniciando loop cámara {cam_id} -> {url}")
         cap = cv2.VideoCapture(url)
+        
+        # Verificar que la cámara se abrió correctamente
+        if not cap.isOpened():
+            logger.error(f"[_process_loop] ❌ NO se pudo abrir la cámara: {url}")
+            return
+        
+        logger.info(f"[_process_loop] ✅ Cámara abierta: {url}")
         frame_n = 0
+        frame_sent = 0
+        
         try:
             while True:
                 if cam_id in self._stopping:
-                    print("[CameraManager] Stop solicitado para", cam_id)
+                    logger.info(f"[_process_loop] 🛑 Stop solicitado para {cam_id}")
                     break
+                
                 ret, frame = cap.read()
+                
                 if not ret:
-                    # intentar reconectar brevemente
+                    logger.warning(f"[_process_loop] ⚠️ Error leyendo frame de {cam_id}, reintentando...")
                     await asyncio.sleep(1.0)
                     cap.release()
                     cap = cv2.VideoCapture(url)
+                    if not cap.isOpened():
+                        logger.error(f"[_process_loop] ❌ No se pudo reconectar a {url}")
+                        break
                     continue
+                
                 frame_n += 1
+                
                 # procesar frame (anotaciones y DB si corresponde)
                 frame_proc = procesar_frame(frame, frame_n)
+                
                 # codificar jpeg
                 ok, buf = cv2.imencode('.jpg', frame_proc, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
                 if not ok:
+                    logger.debug(f"Error codificando frame {frame_n}")
                     continue
+                
                 data = buf.tobytes()
+                
                 # broadcast a listeners
                 listeners = list(self.listeners.get(cam_id, []))
+                
                 if listeners:
+                    frame_sent += 1
+                    if frame_sent % 30 == 0:  # Log cada 30 frames
+                        logger.debug(f"📤 Enviando frame #{frame_n} a {len(listeners)} listeners ({len(data)} bytes)")
+                    
                     # enviar como bytes (WebSocket soporta send_bytes)
+                    dead_websockets = []
                     for ws in listeners:
                         try:
                             await ws.send_bytes(data)
+                        except Exception as e:
+                            logger.debug(f"⚠️ No se pudo enviar a un listener: {e}")
+                            dead_websockets.append(ws)
+                    
+                    # Limpiar listeners muertos
+                    for ws in dead_websockets:
+                        try:
+                            await self.unregister_listener(cam_id, ws)
                         except Exception:
-                            # websocket muerto -> eliminar
-                            try:
-                                await self.unregister_listener(cam_id, ws)
-                            except Exception:
-                                pass
+                            pass
+                else:
+                    if frame_n % 100 == 0:
+                        logger.warning(f"[_process_loop] ⚠️ Cámara {cam_id} sin listeners (frame #{frame_n})")
+                
                 # pequeña pausa para no bloquear la loop del event loop
                 await asyncio.sleep(0)  # cede control
+                
         except Exception as e:
-            print("Error en camera loop:", e)
+            logger.error(f"[_process_loop] ❌ Error en loop: {e}")
+            import traceback
             traceback.print_exc()
         finally:
             try:
                 cap.release()
+                logger.info(f"[_process_loop] 🛑 Liberada cámara {cam_id}")
             except Exception:
                 pass
-            print(f"[CameraManager] Loop cámara {cam_id} finalizado")
+            logger.info(f"[_process_loop] 🛑 Loop cámara {cam_id} finalizado (frames: {frame_n}, enviados: {frame_sent})")

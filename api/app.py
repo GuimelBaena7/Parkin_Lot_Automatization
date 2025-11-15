@@ -80,7 +80,7 @@ async def websocket_camara_directa(websocket: WebSocket):
     - Cámara local (celular/PC): Capturar frames en frontend y enviar
     """
     await websocket.accept()
-    logger.info("Cliente conectado a cámara directa")
+    logger.info("✅ Cliente conectado a cámara directa")
     
     cam_id = None
     camera_task = None
@@ -90,6 +90,7 @@ async def websocket_camara_directa(websocket: WebSocket):
         # Esperar configuración inicial (JSON texto)
         first_message = await websocket.receive_text()
         config = json.loads(first_message)
+        logger.info(f"📝 Configuración recibida: {config}")
         
         if config.get("type") == "camera_url":
             # Cámara IP sin registrar
@@ -100,24 +101,39 @@ async def websocket_camara_directa(websocket: WebSocket):
                 return
             
             # Usar hash de URL como cam_id temporal
-            cam_id = hash(camera_url) % 1000000
-            logger.info(f"Procesando cámara URL: {camera_url} (ID temporal: {cam_id})")
+            cam_id = f"url_{hash(camera_url) % 1000000}"
+            logger.info(f"🎥 Cámara URL: {camera_url} (ID: {cam_id})")
             
-            # Iniciar procesamiento: la tarea de CameraManager abrirá la URL
-            await camera_manager.start_camera(cam_id, camera_url, websocket)
+            # Registrar websocket como listener PRIMERO
+            await camera_manager.register_listener(cam_id, websocket)
             
+            # LUEGO iniciar el loop de procesamiento
+            await camera_manager.start_camera(cam_id, camera_url)
+            
+            # Mantener conexión viva (el CameraManager enviará frames)
+            while True:
+                try:
+                    # Esperar a que el cliente cierre o envíe algo
+                    msg = await websocket.receive_text()
+                    logger.debug(f"Ping recibido: {msg}")
+                except WebSocketDisconnect:
+                    logger.info(f"🔌 Cliente desconectado de {cam_id}")
+                    break
+                except Exception as e:
+                    logger.error(f"❌ Error en websocket {cam_id}: {e}")
+                    break
+        
         elif config.get("type") == "camera_local":
             # Cámara local - el frontend enviará frames
             cam_id = "local_" + str(abs(hash(str(websocket))))
-            logger.info(f"Procesando cámara local (ID: {cam_id})")
-            await camera_manager.register_listener(cam_id, websocket)
-        
-        # Mantener conexión activa
-        if config.get("type") == "camera_local":
+            logger.info(f"📱 Cámara LOCAL (ID: {cam_id})")
+            
             # Para cámara local, recibir y procesar frames del frontend
             while True:
                 try:
                     data = await websocket.receive_bytes()
+                    logger.debug(f"📸 Frame recibido para {cam_id} ({len(data)} bytes)")
+                    
                     # Procesar frame recibido
                     import numpy as np
                     nparr = np.frombuffer(data, np.uint8)
@@ -129,36 +145,31 @@ async def websocket_camara_directa(websocket: WebSocket):
                         frame_proc = procesar_frame(frame, 0)
                         ok, buf = cv2.imencode('.jpg', frame_proc, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
                         if ok:
+                            logger.debug(f"✅ Frame procesado, enviando {len(buf.tobytes())} bytes")
                             await websocket.send_bytes(buf.tobytes())
                 except WebSocketDisconnect:
+                    logger.info(f"🔌 Cliente local desconectado: {cam_id}")
                     break
                 except Exception as e:
-                    logger.error(f"Error procesando frame local: {e}")
-                    await asyncio.sleep(0.1)
-        else:
-            # Para cámara URL, solo mantener conexión viva (cliente puede enviar pings)
-            while True:
-                try:
-                    await websocket.receive_text()
-                except WebSocketDisconnect:
-                    break
-                except Exception:
+                    logger.error(f"❌ Error procesando frame local: {e}")
                     await asyncio.sleep(0.1)
         
     except WebSocketDisconnect:
-        logger.info("Cliente desconectado de cámara directa")
+        logger.info("🔌 Cliente desconectado")
     except Exception as e:
-        logger.error(f"Error en WebSocket cámara directa: {e}")
+        logger.error(f"❌ Error en WebSocket cámara directa: {e}")
     finally:
-        # Si fue una cámara URL, detenemos la tarea. Si fue local, solo quitamos el listener.
+        # Limpieza
         try:
             if cam_id:
                 if config and config.get("type") == "camera_url":
-                    await camera_manager.stop_camera(cam_id)
-                else:
                     await camera_manager.unregister_listener(cam_id, websocket)
-        except Exception:
-            pass
+                    await camera_manager.stop_camera(cam_id)
+                    logger.info(f"🛑 Cámara URL {cam_id} detenida")
+                else:
+                    logger.info(f"🛑 Cámara LOCAL {cam_id} detenida")
+        except Exception as e:
+            logger.error(f"Error en cleanup: {e}")
 
 # ==================== ENDPOINTS DE FACTURACIÓN ====================
 
@@ -188,7 +199,7 @@ async def shutdown_event():
 class CameraRequest(BaseModel):
     """Modelo para crear/actualizar cámara"""
     nombre: str
-    url: str
+    url: str = "local://camera"  # URL por defecto para cámaras locales
     tipo: str = "ip"  # "ip" o "local"
 
 class RegistroRequest(BaseModel):
