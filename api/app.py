@@ -16,13 +16,13 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 import asyncio
 import logging
-from .database import SessionLocal, engine, UNIQUE_FOLDER_PATH
-from .models import Base
-from .schemas import CamaraCreate, CamaraResponse, RegistroResponse
-from .crud import (crear_camara, obtener_camaras, eliminar_camara, obtener_registros, 
+from database import SessionLocal, engine, UNIQUE_FOLDER_PATH
+from models import Base
+from schemas import CamaraCreate, CamaraResponse, RegistroResponse
+from crud import (crear_camara, obtener_camaras, eliminar_camara, obtener_registros, 
                    obtener_registro_por_id, crear_factura, obtener_facturas_activas, 
                    cerrar_factura, obtener_factura_por_registro, calcular_valor_factura)
-from .core.camera_manager import CameraManager
+from core.camera_manager import CameraManager
 import os
 os.makedirs("static", exist_ok=True)
 

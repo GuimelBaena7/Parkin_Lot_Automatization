@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from datetime import datetime
-from .models import Camara, Registro, Factura
-from .schemas import CamaraCreate
+from models import Camara, Registro, Factura
+from schemas import CamaraCreate
 
 def crear_camara(db: Session, camara: CamaraCreate):
     db_camara = Camara(
