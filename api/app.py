@@ -9,25 +9,22 @@ Funcionalidades:
 - Guardado de imágenes detectadas en /static/detecciones
 """
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from datetime import datetime
 import asyncio
 import logging
-from database import SessionLocal, engine, UNIQUE_FOLDER_PATH
-from models import Base
-from schemas import CamaraCreate, CamaraResponse, RegistroResponse
-from crud import (crear_camara, obtener_camaras, eliminar_camara, obtener_registros, 
-                   obtener_registro_por_id, crear_factura, obtener_facturas_activas, 
-                   cerrar_factura, obtener_factura_por_registro, calcular_valor_factura)
+import json
+import cv2
+import numpy as np
 from core.camera_manager import CameraManager
 import os
 os.makedirs("static", exist_ok=True)
 
-# Crear tablas en la base de datos
-Base.metadata.create_all(bind=engine)
+# Nota: Se ha eliminado la dependencia de base de datos. El sistema acepta
+# URLs de cámara o frames locales enviados por el frontend.
 
 app = FastAPI(
     title="Sistema de Detección de Placas",
@@ -54,258 +51,302 @@ camera_manager = CameraManager()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def get_db():
-    """Dependencia para obtener sesión de base de datos"""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# No hay dependencia de base de datos en esta versión simplificada
 
 # ==================== ENDPOINTS REST ====================
 
-@app.post("/camaras", response_model=CamaraResponse)
-async def registrar_camara(camara: CamaraCreate, db: Session = Depends(get_db)):
-    """
-    Registra una nueva cámara en el sistema
-    
-    El frontend envía:
-    {
-        "nombre": "Camara Entrada",
-        "url": "rtsp://mi-camara" 
-    }
-    """
-    try:
-        nueva_camara = crear_camara(db, camara)
-        logger.info(f"Cámara registrada: {nueva_camara.nombre} (ID: {nueva_camara.id})")
-        return nueva_camara
-    except Exception as e:
-        logger.error(f"Error registrando cámara: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-
-@app.get("/camaras", response_model=list[CamaraResponse])
-async def listar_camaras(db: Session = Depends(get_db)):
-    """Lista todas las cámaras registradas"""
-    return obtener_camaras(db)
-
-@app.delete("/camaras/{camara_id}")
-async def eliminar_camara_endpoint(camara_id: int, db: Session = Depends(get_db)):
-    """
-    Elimina una cámara del sistema
-    También detiene su WebSocket si está activo
-    """
-    try:
-        # Detener WebSocket si está activo
-        await camera_manager.stop_camera(camara_id)
-        
-        # Eliminar de base de datos
-        if eliminar_camara(db, camara_id):
-            logger.info(f"Cámara {camara_id} eliminada")
-            return {"message": "Cámara eliminada exitosamente"}
-        else:
-            raise HTTPException(status_code=404, detail="Cámara no encontrada")
-    except Exception as e:
-        logger.error(f"Error eliminando cámara {camara_id}: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-
-@app.get("/registros", response_model=list[RegistroResponse])
-async def listar_registros(db: Session = Depends(get_db)):
-    """Lista todos los registros de detecciones"""
-    return obtener_registros(db)
-
-@app.get("/registros/{registro_id}/imagen")
-async def ver_imagen_detectada(registro_id: int, db: Session = Depends(get_db)):
-    """
-    Devuelve la imagen de una detección específica
-    Ruta: /registros/{id}/imagen
-    """
-    registro = obtener_registro_por_id(db, registro_id)
-    if not registro or not registro.ruta_imagen:
-        raise HTTPException(status_code=404, detail="Imagen no encontrada")
-    
-    return FileResponse(registro.ruta_imagen)
+# Se removieron los endpoints REST que dependían de la base de datos. 
+# Este backend ahora acepta únicamente conexiones WebSocket donde el frontend
+# envía la URL de la cámara o frames locales.
 
 # ==================== WEBSOCKETS DINÁMICOS ====================
 
-@app.websocket("/ws/camara/{cam_id}")
-async def websocket_camara(websocket: WebSocket, cam_id: int, db: Session = Depends(get_db)):
+# El endpoint para cámaras registradas en BD fue eliminado. Use /ws/camara-directa
+# para enviar una URL o frames locales desde el frontend.
+
+
+@app.websocket("/ws/camara-directa")
+async def websocket_camara_directa(websocket: WebSocket):
     """
-    WebSocket dinámico por cámara
+    WebSocket para procesar cámara sin registrar en BD
     
-    Funcionamiento:
-    1. El frontend se conecta a /ws/camara/{cam_id}
-    2. Se obtiene la URL de la cámara desde la base de datos
-    3. Se inicia el procesamiento YOLO + OCR
-    4. Se envían frames procesados en base64 al cliente
+    El frontend envía:
+    1. Primero: {"type": "camera_url", "url": "rtsp://mi-camara"}
+    2. O: {"type": "camera_local"} para usar cámara del dispositivo
+    3. Luego: frames en base64 si es cámara local
+    
+    Casos de uso:
+    - Cámara IP sin registrar: Enviar URL directamente
+    - Cámara local (celular/PC): Capturar frames en frontend y enviar
     """
     await websocket.accept()
-    logger.info(f"Cliente conectado a cámara {cam_id}")
+    logger.info("Cliente conectado a cámara directa")
+    
+    cam_id = None
+    camera_task = None
+    config = None
     
     try:
-        # Obtener información de la cámara
-        camaras = obtener_camaras(db)
-        camara = next((c for c in camaras if c.id == cam_id), None)
+        # Esperar configuración inicial (JSON texto)
+        first_message = await websocket.receive_text()
+        config = json.loads(first_message)
         
-        if not camara:
-            await websocket.send_text("ERROR: Cámara no encontrada")
-            await websocket.close()
-            return
-        
-        # Iniciar procesamiento de la cámara
-        await camera_manager.start_camera(cam_id, camara.url, websocket, db)
+        if config.get("type") == "camera_url":
+            # Cámara IP sin registrar
+            camera_url = config.get("url")
+            if not camera_url:
+                await websocket.send_text(json.dumps({"error": "URL de cámara requerida"}))
+                await websocket.close()
+                return
+            
+            # Usar hash de URL como cam_id temporal
+            cam_id = hash(camera_url) % 1000000
+            logger.info(f"Procesando cámara URL: {camera_url} (ID temporal: {cam_id})")
+            
+            # Iniciar procesamiento: la tarea de CameraManager abrirá la URL
+            await camera_manager.start_camera(cam_id, camera_url, websocket)
+            
+        elif config.get("type") == "camera_local":
+            # Cámara local - el frontend enviará frames
+            cam_id = "local_" + str(abs(hash(str(websocket))))
+            logger.info(f"Procesando cámara local (ID: {cam_id})")
+            await camera_manager.register_listener(cam_id, websocket)
         
         # Mantener conexión activa
-        while True:
-            try:
-                await websocket.receive_text()
-            except WebSocketDisconnect:
-                break
-            except Exception:
-                await asyncio.sleep(0.1)
+        if config.get("type") == "camera_local":
+            # Para cámara local, recibir y procesar frames del frontend
+            while True:
+                try:
+                    data = await websocket.receive_bytes()
+                    # Procesar frame recibido
+                    import numpy as np
+                    nparr = np.frombuffer(data, np.uint8)
+                    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    
+                    if frame is not None:
+                        # Procesar y enviar de vuelta
+                        from core.detection import procesar_frame
+                        frame_proc = procesar_frame(frame, 0)
+                        ok, buf = cv2.imencode('.jpg', frame_proc, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                        if ok:
+                            await websocket.send_bytes(buf.tobytes())
+                except WebSocketDisconnect:
+                    break
+                except Exception as e:
+                    logger.error(f"Error procesando frame local: {e}")
+                    await asyncio.sleep(0.1)
+        else:
+            # Para cámara URL, solo mantener conexión viva (cliente puede enviar pings)
+            while True:
+                try:
+                    await websocket.receive_text()
+                except WebSocketDisconnect:
+                    break
+                except Exception:
+                    await asyncio.sleep(0.1)
         
     except WebSocketDisconnect:
-        logger.info(f"Cliente desconectado de cámara {cam_id}")
+        logger.info("Cliente desconectado de cámara directa")
     except Exception as e:
-        logger.error(f"Error en WebSocket cámara {cam_id}: {e}")
+        logger.error(f"Error en WebSocket cámara directa: {e}")
     finally:
-        await camera_manager.unregister_listener(cam_id, websocket)
+        # Si fue una cámara URL, detenemos la tarea. Si fue local, solo quitamos el listener.
+        try:
+            if cam_id:
+                if config and config.get("type") == "camera_url":
+                    await camera_manager.stop_camera(cam_id)
+                else:
+                    await camera_manager.unregister_listener(cam_id, websocket)
+        except Exception:
+            pass
 
 # ==================== ENDPOINTS DE FACTURACIÓN ====================
 
-@app.get("/api/camaras", response_model=list[CamaraResponse])
-async def get_camaras_frontend(db: Session = Depends(get_db)):
-    """Endpoint compatible con frontend - Lista cámaras"""
-    return obtener_camaras(db)
-
-@app.post("/api/camaras", response_model=CamaraResponse)
-async def create_camara_frontend(camara: CamaraCreate, db: Session = Depends(get_db)):
-    """Endpoint compatible con frontend - Crear cámara"""
-    return crear_camara(db, camara)
-
-@app.delete("/api/camaras/{camara_id}")
-async def delete_camara_frontend(camara_id: int, db: Session = Depends(get_db)):
-    """Endpoint compatible con frontend - Eliminar cámara"""
-    await camera_manager.stop_camera(camara_id)
-    if eliminar_camara(db, camara_id):
-        return {"message": "Cámara eliminada"}
-    raise HTTPException(status_code=404, detail="Cámara no encontrada")
-
-@app.get("/api/registros")
-async def get_registros_frontend(estado: str = None, db: Session = Depends(get_db)):
-    """Endpoint compatible con frontend - Lista registros con facturas"""
-    from .crud import obtener_facturas_activas, obtener_factura_por_registro, calcular_valor_factura
-    
-    if estado == "activo":
-        # Solo vehículos activos (con facturas abiertas)
-        facturas_activas = obtener_facturas_activas(db)
-        result = []
-        
-        for factura in facturas_activas:
-            registro = factura.registro
-            valor_actual, horas = calcular_valor_factura(factura.hora_entrada)
-            
-            result.append({
-                "id": registro.id,
-                "placa": registro.placa_final,
-                "hora_entrada": factura.hora_entrada.isoformat(),
-                "hora_salida": None,
-                "estado": "activo",
-                "camara_id": registro.camara_id,
-                "tipo_vehiculo": registro.tipo_vehiculo,
-                "url_imagen": f"/registros/{registro.id}/imagen" if registro.ruta_imagen else None,
-                "valor_actual": valor_actual,
-                "horas_transcurridas": horas,
-                "factura_id": factura.id
-            })
-        return result
-    else:
-        # Todos los registros
-        registros = obtener_registros(db)
-        result = []
-        
-        for r in registros:
-            factura = obtener_factura_por_registro(db, r.id)
-            
-            registro_data = {
-                "id": r.id,
-                "placa": r.placa_final,
-                "hora_entrada": r.hora_deteccion.isoformat(),
-                "hora_salida": factura.hora_salida.isoformat() if factura and factura.hora_salida else None,
-                "estado": factura.estado if factura else "sin_factura",
-                "camara_id": r.camara_id,
-                "tipo_vehiculo": r.tipo_vehiculo,
-                "url_imagen": f"/registros/{r.id}/imagen" if r.ruta_imagen else None
-            }
-            
-            if factura:
-                registro_data["factura_id"] = factura.id
-                registro_data["valor_pagado"] = factura.valor_pagado
-            
-            result.append(registro_data)
-        
-        return result
-
-@app.patch("/api/facturas/{vehiculo_id}/cerrar")
-async def cerrar_factura_frontend(vehiculo_id: int, data: dict, db: Session = Depends(get_db)):
-    """Cerrar factura de vehículo - Compatible con frontend"""
-    from .crud import obtener_factura_por_registro, cerrar_factura
-    from datetime import datetime
-    
-    # Obtener factura por registro_id (vehiculo_id es el registro_id)
-    factura = obtener_factura_por_registro(db, vehiculo_id)
-    
-    if not factura:
-        raise HTTPException(status_code=404, detail="Factura no encontrada")
-    
-    if factura.estado == "cerrado":
-        raise HTTPException(status_code=400, detail="Factura ya está cerrada")
-    
-    # Obtener datos del request
-    valor_pagado = data.get("valor_pagado", 0)
-    hora_salida_str = data.get("hora_salida")
-    
-    # Parsear hora de salida
-    if hora_salida_str:
-        try:
-            hora_salida = datetime.fromisoformat(hora_salida_str.replace('Z', '+00:00'))
-        except:
-            hora_salida = datetime.utcnow()
-    else:
-        hora_salida = datetime.utcnow()
-    
-    # Cerrar factura
-    factura_cerrada = cerrar_factura(db, factura.id, valor_pagado, hora_salida)
-    
-    if factura_cerrada:
-        return {
-            "message": "Factura cerrada exitosamente",
-            "valor": valor_pagado,
-            "vehiculo_id": vehiculo_id,
-            "factura_id": factura.id,
-            "hora_salida": hora_salida.isoformat()
-        }
-    else:
-        raise HTTPException(status_code=500, detail="Error cerrando factura")
+# Funcionalidades relacionadas con facturación y registros han sido removidas
+# para simplificar el backend a un servicio de procesamiento de cámaras sin DB.
 
 @app.get("/")
 async def root():
     """Endpoint de prueba"""
     return {
-        "message": "Sistema de Detección de Placas - Backend Activo",
-        "camaras_activas": len(camera_manager.active_cameras),
+        "message": "Sistema de Detección de Placas - Backend Activo (sin DB)",
+        "camaras_activas": len(camera_manager.active_tasks),
         "endpoints": {
-            "camaras": "/camaras (GET, POST)",
-            "api_camaras": "/api/camaras (GET, POST, DELETE)",
-            "registros": "/registros (GET)",
-            "api_registros": "/api/registros?estado=activo (GET)",
-            "cerrar_factura": "/api/facturas/{id}/cerrar (PATCH)",
-            "imagen": "/registros/{id}/imagen (GET)",
-            "websocket": "/ws/camara/{cam_id}"
+            "websocket_directo": "/ws/camara-directa"
         }
     }
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Limpieza al cerrar la aplicación"""
+    await camera_manager.stop_all_cameras()
+    logger.info("Backend cerrado - todas las cámaras detenidas")
+
+
+# ==================== MODELOS PYDANTIC ====================
+
+class CameraRequest(BaseModel):
+    """Modelo para crear/actualizar cámara"""
+    nombre: str
+    url: str
+    tipo: str = "ip"  # "ip" o "local"
+
+class RegistroRequest(BaseModel):
+    """Modelo para crear registro"""
+    placa: str
+    timestamp: str = None
+    imagen_url: str = None
+    estado: str = "activo"
+
+# ==================== ALMACENAMIENTO EN MEMORIA ====================
+
+# Diccionarios para almacenar datos (en producción usar base de datos)
+cameras_db = {}  # {camera_id: {"nombre": str, "url": str, "tipo": str, "creado": datetime}}
+registros_db = {}  # {registro_id: {"placa": str, "timestamp": str, "estado": str, ...}}
+camera_counter = 0
+registro_counter = 0
+
+# ==================== ENDPOINTS REST PARA CÁMARAS ====================
+
+@app.get("/api/camaras")
+async def get_camaras():
+    """Obtener lista de cámaras registradas"""
+    return {
+        "camaras": list(cameras_db.values()),
+        "total": len(cameras_db),
+        "activas": len(camera_manager.active_tasks)
+    }
+
+@app.post("/api/camaras")
+async def create_camera(camera: CameraRequest):
+    """Crear nueva cámara"""
+    global camera_counter
+    camera_counter += 1
+    camera_id = camera_counter
+    
+    cameras_db[camera_id] = {
+        "id": camera_id,
+        "nombre": camera.nombre,
+        "url": camera.url,
+        "tipo": camera.tipo,
+        "creado": datetime.now().isoformat(),
+        "estado": "inactivo"
+    }
+    
+    logger.info(f"Cámara creada: {camera.nombre} (ID: {camera_id})")
+    return {
+        "success": True,
+        "camera_id": camera_id,
+        "message": "Cámara creada exitosamente"
+    }
+
+@app.get("/api/camaras/{camera_id}")
+async def get_camera(camera_id: int):
+    """Obtener detalles de cámara específica"""
+    if camera_id not in cameras_db:
+        raise HTTPException(status_code=404, detail="Cámara no encontrada")
+    
+    camera = cameras_db[camera_id]
+    camera["activa"] = camera_id in camera_manager.active_tasks
+    camera["listeners"] = len(camera_manager.listeners.get(camera_id, set()))
+    return camera
+
+@app.put("/api/camaras/{camera_id}")
+async def update_camera(camera_id: int, camera: CameraRequest):
+    """Actualizar cámara"""
+    if camera_id not in cameras_db:
+        raise HTTPException(status_code=404, detail="Cámara no encontrada")
+    
+    cameras_db[camera_id].update({
+        "nombre": camera.nombre,
+        "url": camera.url,
+        "tipo": camera.tipo
+    })
+    
+    logger.info(f"Cámara actualizada: {camera.nombre} (ID: {camera_id})")
+    return {"success": True, "message": "Cámara actualizada"}
+
+@app.delete("/api/camaras/{camera_id}")
+async def delete_camera(camera_id: int):
+    """Eliminar cámara"""
+    if camera_id not in cameras_db:
+        raise HTTPException(status_code=404, detail="Cámara no encontrada")
+    
+    # Detener procesamiento si está activo
+    if camera_id in camera_manager.active_tasks:
+        await camera_manager.stop_camera(camera_id)
+    
+    del cameras_db[camera_id]
+    logger.info(f"Cámara eliminada (ID: {camera_id})")
+    return {"success": True, "message": "Cámara eliminada"}
+
+# ==================== ENDPOINTS REST PARA REGISTROS ====================
+
+@app.get("/api/registros")
+async def get_registros(estado: str = None):
+    """Obtener registros de detecciones"""
+    registros = list(registros_db.values())
+    
+    if estado:
+        registros = [r for r in registros if r.get("estado") == estado]
+    
+    return {
+        "registros": registros,
+        "total": len(registros),
+        "filtrado_por": estado or "ninguno"
+    }
+
+@app.post("/api/registros")
+async def create_registro(registro: RegistroRequest):
+    """Crear nuevo registro de detección"""
+    global registro_counter
+    registro_counter += 1
+    registro_id = registro_counter
+    
+    registros_db[registro_id] = {
+        "id": registro_id,
+        "placa": registro.placa,
+        "timestamp": registro.timestamp or datetime.now().isoformat(),
+        "imagen_url": registro.imagen_url,
+        "estado": registro.estado
+    }
+    
+    logger.info(f"Registro creado: {registro.placa}")
+    return {
+        "success": True,
+        "registro_id": registro_id,
+        "message": "Registro creado exitosamente"
+    }
+
+@app.get("/api/registros/{registro_id}")
+async def get_registro(registro_id: int):
+    """Obtener detalles de registro"""
+    if registro_id not in registros_db:
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
+    return registros_db[registro_id]
+
+@app.delete("/api/registros/{registro_id}")
+async def delete_registro(registro_id: int):
+    """Eliminar registro"""
+    if registro_id not in registros_db:
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
+    
+    del registros_db[registro_id]
+    logger.info(f"Registro eliminado (ID: {registro_id})")
+    return {"success": True, "message": "Registro eliminado"}
+
+# ==================== ENDPOINTS DE ESTADÍSTICAS ====================
+
+@app.get("/api/stats")
+async def get_stats():
+    """Obtener estadísticas del sistema"""
+    return {
+        "camaras_total": len(cameras_db),
+        "camaras_activas": len(camera_manager.active_tasks),
+        "registros_total": len(registros_db),
+        "registros_activos": len([r for r in registros_db.values() if r.get("estado") == "activo"]),
+        "conexiones_simultaneas": sum(len(listeners) for listeners in camera_manager.listeners.values()),
+        "timestamp": datetime.now().isoformat()
+    }
     await camera_manager.stop_all_cameras()
     logger.info("Aplicación cerrada - todas las cámaras detenidas")

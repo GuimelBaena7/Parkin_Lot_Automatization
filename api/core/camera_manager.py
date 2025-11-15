@@ -3,15 +3,23 @@ import asyncio
 import cv2
 import base64
 import traceback
+import logging
 from collections import defaultdict
 
 from .detection import procesar_frame
+
+logger = logging.getLogger(__name__)
+
+# Límites para prevenir fugas de memoria
+MAX_LISTENERS_PER_CAMERA = 50
+MAX_ACTIVE_CAMERAS = 20
 
 class CameraManager:
     """
     Gestiona procesamiento por cámara:
     - active_tasks: tarea asyncio por camara (processing loop)
     - listeners: set de websockets por camara para broadcast
+    - Protecciones contra fugas de memoria
     """
 
     def __init__(self):
@@ -23,6 +31,11 @@ class CameraManager:
         """
         Inicia la tarea de procesamiento si no existe.
         """
+        # Validar límite de cámaras activas
+        if len(self.active_tasks) >= MAX_ACTIVE_CAMERAS:
+            logger.warning(f"Límite de cámaras activas alcanzado: {MAX_ACTIVE_CAMERAS}")
+            raise RuntimeError(f"Máximo de {MAX_ACTIVE_CAMERAS} cámaras activas alcanzado")
+        
         if websocket:
             await self.register_listener(cam_id, websocket)
         
@@ -30,6 +43,7 @@ class CameraManager:
             loop = asyncio.get_event_loop()
             task = loop.create_task(self._process_loop(cam_id, url))
             self.active_tasks[cam_id] = task
+            logger.info(f"Cámara {cam_id} iniciada desde URL: {url}")
 
     async def stop_camera(self, cam_id: int):
         """
@@ -37,27 +51,44 @@ class CameraManager:
         """
         if cam_id in self.active_tasks:
             self._stopping.add(cam_id)
-            await self.active_tasks[cam_id]
-            self.active_tasks.pop(cam_id, None)
-            self._stopping.discard(cam_id)
+            try:
+                await asyncio.wait_for(self.active_tasks[cam_id], timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning(f"Timeout esperando a que se detenga cámara {cam_id}")
+            finally:
+                self.active_tasks.pop(cam_id, None)
+                self._stopping.discard(cam_id)
         # cerrar listeners (se espera que los websockets manejen desconexión del lado cliente)
         self.listeners.pop(cam_id, None)
+        logger.info(f"Cámara {cam_id} detenida")
 
     async def stop_all_cameras(self):
         keys = list(self.active_tasks.keys())
         for cam_id in keys:
             await self.stop_camera(cam_id)
+        logger.info("Todas las cámaras detenidas")
 
     async def register_listener(self, cam_id: int, websocket):
         """
-        Añade websocket listener y crea la tarea si es necesario.
+        Añade websocket listener con validación de límite.
         """
+        listener_count = len(self.listeners.get(cam_id, set()))
+        
+        if listener_count >= MAX_LISTENERS_PER_CAMERA:
+            logger.warning(f"Límite de listeners para cámara {cam_id} alcanzado: {MAX_LISTENERS_PER_CAMERA}")
+            raise RuntimeError(f"Máximo de {MAX_LISTENERS_PER_CAMERA} listeners por cámara alcanzado")
+        
         self.listeners[cam_id].add(websocket)
+        logger.info(f"Listener registrado para cámara {cam_id} ({listener_count + 1} total)")
 
     async def unregister_listener(self, cam_id: int, websocket):
+        """
+        Elimina websocket listener.
+        """
         s = self.listeners.get(cam_id)
         if s and websocket in s:
             s.remove(websocket)
+            logger.debug(f"Listener desregistrado de cámara {cam_id} ({len(s)} restantes)")
 
     async def _process_loop(self, cam_id: int, url: str):
         """
