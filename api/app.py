@@ -126,13 +126,14 @@ async def websocket_camara_directa(websocket: WebSocket):
         elif config.get("type") == "camera_local":
             # Cámara local - el frontend enviará frames
             cam_id = "local_" + str(abs(hash(str(websocket))))
-            logger.info(f"📱 Cámara LOCAL (ID: {cam_id})")
+            logger.info(f"📱 Cámara LOCAL (ID: {cam_id}) - Iniciando detección en tiempo real")
             
             # Para cámara local, recibir y procesar frames del frontend
             while True:
                 try:
                     data = await websocket.receive_bytes()
-                    logger.debug(f"📸 Frame recibido para {cam_id} ({len(data)} bytes)")
+                    if len(data) > 1000:  # Solo log frames válidos
+                        logger.debug(f"📸 Frame recibido para {cam_id} ({len(data)} bytes)")
                     
                     # Procesar frame recibido
                     import numpy as np
@@ -140,12 +141,24 @@ async def websocket_camara_directa(websocket: WebSocket):
                     frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                     
                     if frame is not None:
-                        # Procesar y enviar de vuelta
-                        from core.detection import procesar_frame
-                        frame_proc = procesar_frame(frame, 0)
-                        ok, buf = cv2.imencode('.jpg', frame_proc, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                        # Procesar con detección simple
+                        try:
+                            import sys
+                            import os
+                            sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'detección_yolo'))
+                            from simple_detection import detectar_frame
+                            frame_proc = detectar_frame(frame, 0)
+                            logger.debug(f"✅ Frame procesado con detección")
+                        except Exception as e:
+                            logger.error(f"Error en detección: {e}")
+                            # Fallback: frame con información
+                            frame_proc = frame.copy()
+                            cv2.putText(frame_proc, f"Sistema Activo - {cam_id}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                            cv2.putText(frame_proc, "Buscando vehiculos...", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                        
+                        # Enviar frame procesado
+                        ok, buf = cv2.imencode('.jpg', frame_proc, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
                         if ok:
-                            logger.debug(f"✅ Frame procesado, enviando {len(buf.tobytes())} bytes")
                             await websocket.send_bytes(buf.tobytes())
                 except WebSocketDisconnect:
                     logger.info(f"🔌 Cliente local desconectado: {cam_id}")
@@ -296,7 +309,31 @@ async def delete_camera(camera_id: int):
 @app.get("/api/registros")
 async def get_registros(estado: str = None):
     """Obtener registros de detecciones"""
+    # Combinar registros de memoria y base de datos de detecciones
     registros = list(registros_db.values())
+    
+    # Agregar detecciones de la base de datos simple
+    try:
+        import sqlite3
+        conn = sqlite3.connect("detecciones.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM detecciones ORDER BY timestamp DESC LIMIT 20")
+        db_detections = cursor.fetchall()
+        conn.close()
+        
+        for det in db_detections:
+            registros.append({
+                "id": f"det_{det[0]}",
+                "placa_final": det[1],
+                "timestamp": det[2],
+                "imagen_path": det[3],
+                "confianza": det[4],
+                "tipo_vehiculo": "car",
+                "direccion": "entrada",
+                "estado": "detectado"
+            })
+    except Exception as e:
+        logger.error(f"Error cargando detecciones de DB: {e}")
     
     if estado:
         registros = [r for r in registros if r.get("estado") == estado]
